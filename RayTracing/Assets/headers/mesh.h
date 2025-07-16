@@ -30,31 +30,24 @@ struct Material
     glm::vec4 emissionColor;
 
     int textureIndex = -1;
-    float emissionStrength;
-    float smoothness; 
-    float specularProbability;
+    float emissionStrength = -1;
+    float smoothness = -1; 
+    float specularProbability = -1;
 
-    float checkerScale;
-    float refractiveIndex;
-    int materialType; // 76 bytes
-    int index; // padded, 80 bytes
-
+    float checkerScale = -1;
+    float refractiveIndex = -1;
+    int index = -1; // padded, 80 bytes
     int isEdgeHighlight = 0;
-    int pad1;
-	int pad2;
-	int pad3;
 
-    Material() : color(glm::vec4(1.0f, 1.0f, 1.0f, 0.0f)), materialType(DIFFUSE) {}
+    Material() : color(glm::vec4(1.0f, 1.0f, 1.0f, 0.0f)) {}
 
     void makeDiffusive(const glm::vec3& col)
     {
-        materialType = DIFFUSE;
         color = glm::vec4(col, 0.0f);
     }
 
     void addSpecular(float smooth, float specProb)
     {
-        materialType = SPECULAR;
         specularColor = glm::vec4(glm::vec3(1.0f), 0.0f);
         smoothness = smooth;
         specularProbability = specProb;
@@ -62,7 +55,6 @@ struct Material
 
     void makeSpecular(const glm::vec3& col, const glm::vec3& specularCol, float smooth, float specProb)
     {
-        materialType = SPECULAR;
         color = glm::vec4(col, 0.0f);
         specularColor = glm::vec4(specularCol, 0.0f);
         smoothness = smooth;
@@ -71,33 +63,28 @@ struct Material
 
     void makeLight(const glm::vec3& emissionCol, float emissionStr)
     {
-        materialType = LIGHT;
         emissionColor = glm::vec4(emissionCol, 0.0f);
         emissionStrength = emissionStr;
     }
 
     void makeChecker(float scale)
     {
-        materialType = CHECKER;
         checkerScale = scale;
     }
 
     void makeGlass(const glm::vec3& col, float refIndex)
     {
-        materialType = GLASS;
         color = glm::vec4(col, 0.0f);
         refractiveIndex = refIndex;
     }
 
     void makeGlassHighlight(const glm::vec3& col)
     {
-        materialType = GLASS_HIGHLIGHT;
         color = glm::vec4(col, 0.0f);
     }
 
     void makeTextured(int texIndex, const glm::vec3& col)
     {
-        materialType = TEXTURE;
         textureIndex = texIndex;;
     }
 };
@@ -337,15 +324,6 @@ void getTrianglesData_(const std::string& folderRelativePath, int dirUpTraversal
             //         nameToMtl[mtlName].refractiveIndex = refractiveIndex;
             //     }
             // }
-            else if (key == "GlassHighlight")
-            {
-                // Override any previous material type with glass highlight
-                if (nameToMtl[mtlName].materialType != LIGHT)
-                {
-                    glm::vec3 currentColor = glm::vec3(nameToMtl[mtlName].color);
-                    nameToMtl[mtlName].makeGlassHighlight(currentColor);
-                }
-            }
             else if (key == "EDGE_HIGHLIGHT")
             {
                 std::cout << "EDGE_HIGHLIGHT found." << std::endl;
@@ -353,23 +331,16 @@ void getTrianglesData_(const std::string& folderRelativePath, int dirUpTraversal
             }
             else if (key == "map_Kd")
             {
-                // Only apply texture if material is not already a light source or glass type
-                if (nameToMtl[mtlName].materialType != LIGHT && 
-                    nameToMtl[mtlName].materialType != GLASS &&
-                    nameToMtl[mtlName].materialType != GLASS_HIGHLIGHT)
-                {
-                    std::string texName;
-                    strStream >> texName;
-                    nameToMtl[mtlName].materialType = TEXTURE;
-                    int index;
-                    try {
-                        index = texFileToIndex.at(texName);
-                    } catch (const std::out_of_range& e) {
-                        std::cerr << "Key not found: " << e.what() << std::endl;
-                        throw(errno);
-                    }
-                    nameToMtl[mtlName].textureIndex = index;
+                std::string texName;
+                strStream >> texName;
+                int index;
+                try {
+                    index = texFileToIndex.at(texName);
+                } catch (const std::out_of_range& e) {
+                    std::cerr << "Key not found: " << e.what() << std::endl;
+                    throw(errno);
                 }
+                nameToMtl[mtlName].textureIndex = index;
             }
         }
         libToMtlMaps[name] = nameToMtl;
@@ -525,7 +496,7 @@ void getTrianglesData_(const std::string& folderRelativePath, int dirUpTraversal
                 glm::vec4(trianglePoints[0], 0.0f),
                 glm::vec4(trianglePoints[1], 0.0f), 
                 glm::vec4(trianglePoints[2], 0.0f),
-                triangleTexCoords[1], triangleTexCoords[2], triangleTexCoords[0]));
+                triangleTexCoords[0], triangleTexCoords[1], triangleTexCoords[2]));
 
             bvhTriangles.push_back(BVHTriangle(trianglePoints[0], trianglePoints[1], trianglePoints[2]));
         }

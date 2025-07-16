@@ -28,12 +28,7 @@ struct Material
     float checkerScale;
     float refractiveIndex;
     int materialType; // 76 bytes
-    int index; // padded, 80 bytes
-
 	int isEdgeHighlight;
-	int pad1;
-	int pad2;
-	int pad3;
 };
 
 struct Sphere
@@ -52,7 +47,7 @@ struct Triangle
 	vec2 bTex;
 	vec2 cTex;
 	int mtlIndex;
-	int pad;
+	// int pad;
 };
 
 struct BoundingBox
@@ -168,7 +163,7 @@ float randomNormalDist(inout uint rngState)
 {
 	float theta = 2 * 3.1415926 * random(rngState);
 	float rho = sqrt(-2 * log(random(rngState)));
-	return rho + cos(theta);
+	return rho * cos(theta);
 }
 
 vec3 randomDirection(inout uint rngState)
@@ -184,7 +179,7 @@ vec3 randomDirection(inout uint rngState)
 	return vec3(0.0f);
 }
 
-vec3 randomDirectionAlt(inout uint rngState)
+vec3 randomDirectionGauss(inout uint rngState)
 {
 	float x = randomNormalDist(rngState);
 	float y = randomNormalDist(rngState);
@@ -192,9 +187,17 @@ vec3 randomDirectionAlt(inout uint rngState)
 	return normalize(vec3(x, y, z));
 }
 
+vec3 randomDirectionAlt(inout uint state)
+{
+	float z = random(state) * 2.0 - 1.0;         // z in [-1, 1]
+	float a = random(state) * 6.2831853;         // a in [0, 2π]
+	float r = sqrt(1.0 - z * z);                 // radius in xy-plane
+	return vec3(r * cos(a), r * sin(a), z);
+}
+
 vec3 randomDirectionHemisphere(vec3 normal, inout uint rngState)
 {
-	vec3 dir = randomDirection(rngState);
+	vec3 dir = randomDirectionAlt(rngState);
 	return dir * sign(dot(dir, normal));
 }
 
@@ -274,7 +277,7 @@ vec3 getEnvironmentalLight(Ray ray)
 
 HitInfo raySphereIntersect(Ray ray, Sphere sphere)
 {
-	vec3 rayOriginTrans = ray.origin - sphere.center.xyz;
+	vec3 rayOriginTrans = ray.origin - sphere.center;
 	float a = dot(ray.direction, ray.direction);
 	float b = 2 * dot(rayOriginTrans, ray.direction);
 	float c = dot(rayOriginTrans, rayOriginTrans) - sphere.radius * sphere.radius;
@@ -299,13 +302,13 @@ HitInfo raySphereIntersect(Ray ray, Sphere sphere)
 	return hitInfo;
 }
 
-HitInfo rayTriangleIntersect(Ray ray, Triangle tri, int triIndex)
+HitInfo rayTriangleIntersect(Ray ray, Triangle tri)
 {
 	HitInfo hitInfo;
 	hitInfo.didHit = false;
 
-	vec3 e0 = tri.b.xyz - tri.a.xyz;
-	vec3 e1 = tri.c.xyz - tri.a.xyz;
+	vec3 e0 = tri.b - tri.a;
+	vec3 e1 = tri.c - tri.a;
 	vec3 cross01 = cross(e0, e1);
 	float det = -dot(ray.direction, cross01);
 
@@ -313,7 +316,7 @@ HitInfo rayTriangleIntersect(Ray ray, Triangle tri, int triIndex)
 		return hitInfo;
 	
 	float invDet = 1.0f / det;
-	vec3 ao = ray.origin - tri.a.xyz;
+	vec3 ao = ray.origin - tri.a;
 	float dst = dot(ao, cross01) * invDet;
 
 	if (dst <= 1e-6)
@@ -331,7 +334,6 @@ HitInfo rayTriangleIntersect(Ray ray, Triangle tri, int triIndex)
 	hitInfo.normal = normalize(cross01);
 	hitInfo.dst = dst;
 	hitInfo.mtlIndex = tri.mtlIndex;
-	hitInfo.triangleIndex = triIndex;
 
 	float w = 1.0f - u - v;
     hitInfo.baryCoord = vec3(w, u, v);
@@ -341,16 +343,7 @@ HitInfo rayTriangleIntersect(Ray ray, Triangle tri, int triIndex)
 
 vec3 getTriangleTextureColor(int textureIndex, vec3 baryCoord, vec2 aTex, vec2 bTex, vec2 cTex)
 {
-	float w = baryCoord.x;
-	float u = baryCoord.y;
-	float v = baryCoord.z;
-	vec2 uv = aTex * u + bTex * v + cTex * w;
-
-	if (textureIndex < 0 || textureIndex >= numTextures)
-		return vec3(0.0f, 0.0f, 0.0f);
-
-	// return texture(textures[textureIndex], uv).rgb;
-	// return texture(texture1, uv).rgb;
+	vec2 uv = aTex * baryCoord.x + bTex * baryCoord.y + cTex * baryCoord.z;
 
 	// Use if-else to select the correct texture
     if (textureIndex == 0)
@@ -428,13 +421,14 @@ HitInfo calculateRayCollisionBVH(Ray ray)
 		{				
 			for (int i = node.triangleIndex; i < node.triangleIndex + node.triangleCount; i++)
 			{
-				HitInfo hitInfo = rayTriangleIntersect(ray, triangles[i], i);
+				HitInfo hitInfo = rayTriangleIntersect(ray, triangles[i]);
 				if (hitInfo.didHit)
 					if (hitInfo.dst < result.dst)
+					{
 						result = hitInfo;
+						result.triangleIndex = i;
+					}
 			}
-			// if (result.didHit) 
-			// 	return result;
 		}
 		else
 		{
@@ -486,64 +480,49 @@ vec3 trace(Ray ray, inout uint rngState)
 		{
 			Material material = materials[hitInfo.mtlIndex];
 
-			if (material.materialType != GLASS)
-				ray.origin = hitInfo.hitPoint - ray.direction * hitInfo.dst * -1e-3; // Offset intersection above the surface
-			else 
-				ray.origin = hitInfo.hitPoint + ray.direction * hitInfo.dst * -1e-3; // Offset intersection below the surface
-
 			emittedLight *= 0.0f;
 			attenuation *= 0.0f;
 
 			vec3 prevDirection = ray.direction;
+			vec3 specularDirection = reflect(ray.direction, hitInfo.normal);
 
-			switch (material.materialType)
+            bool isSpecularBounce = material.specularProbability > random(rngState);
+            if (isSpecularBounce)
+            {
+                ray.direction = specularDirection;
+                attenuation = material.specularColor.xyz;
+            }
+			else if (material.refractiveIndex > 0.999999)
 			{
-				case DIFFUSE:
-				case TEXTURE:
-					ray.direction = normalize(hitInfo.normal + randomDirection(rngState));
-					Triangle tri = triangles[hitInfo.triangleIndex];
-					attenuation = material.materialType == DIFFUSE ? material.color.xyz : getTriangleTextureColor(material.textureIndex, hitInfo.baryCoord, tri.aTex, tri.bTex, tri.cTex);
-					break;
-				case SPECULAR:
-					vec3 diffuseDirection = normalize(hitInfo.normal + randomDirection(rngState));
-					vec3 specularDirection = reflect(ray.direction, hitInfo.normal);
-					bool isSpecularBounce = material.specularProbability > random(rngState);
+				float refractiveIndex = ray.insideGlass ? material.refractiveIndex : 1.0f / material.refractiveIndex;
 
-					ray.direction = mix(diffuseDirection, specularDirection, isSpecularBounce ? material.smoothness : 0.0f);
-					attenuation = isSpecularBounce ? vec3(1.0f) : material.color.xyz;
-					break;
-				case LIGHT:
-					emittedLight = material.emissionColor.xyz * material.emissionStrength;
-					incomingLight += emittedLight * rayColor;
-					// if (i == 0)
-					//	incomingLight = normalizeColor(incomingLight);
-					return incomingLight;
-				case CHECKER:
-					ray.direction = normalize(hitInfo.normal + randomDirection(rngState));
+				vec3 normal = hitInfo.normal;
+				if (ray.insideGlass)
+					normal = -normal;
 
-					bool isBlackChecker = material.checkerScale > 0.0f
-						&& (mod(floor(ray.origin.x * material.checkerScale)
-						+ floor(ray.origin.y * material.checkerScale)
-						+ floor(ray.origin.z * material.checkerScale), 2) == 0);
+				bool isRefracted;
+				ray.direction = refract_(ray.direction, normal, refractiveIndex, isRefracted);
 
-					attenuation = isBlackChecker ? vec3(0.0f) : vec3(1.0f);
-					break;
-				case GLASS:
-					float refractiveIndex = ray.insideGlass ? material.refractiveIndex : 1.0f / material.refractiveIndex;
-					bool isRefracted;
-					ray.direction = refract_(ray.direction, hitInfo.normal, refractiveIndex, isRefracted);
-					ray.insideGlass = isRefracted != ray.insideGlass;
-					attenuation = material.color.xyz;
-
-					break;
-				default:
-					return vec3(1.0f, 0.0f, 1.0f);
+				ray.insideGlass = ray.insideGlass != isRefracted;
+				attenuation = material.color.xyz;
 			}
+			else
+			{
+				vec3 diffuseDirection = normalize(hitInfo.normal + randomDirectionAlt(rngState));
+                ray.direction = mix(diffuseDirection, specularDirection, material.smoothness);
+				Triangle tri = triangles[hitInfo.triangleIndex];
+				attenuation = material.textureIndex != -1 ? getTriangleTextureColor(material.textureIndex, hitInfo.baryCoord, tri.aTex, tri.bTex, tri.cTex) : material.color.xyz;
+			}
+
+			vec3 emittedLight = material.emissionColor.xyz * material.emissionStrength;
+            incomingLight += emittedLight * rayColor;
 
 			if (bool(material.isEdgeHighlight) && (bounceCount > 1))
 				ray.direction = prevDirection;
 			else
 				rayColor *= attenuation;
+
+			ray.origin = hitInfo.hitPoint + ray.direction * 1e-3;
 
 			// A simple optimization
 			float p = max(rayColor.r, max(rayColor.g, rayColor.b));

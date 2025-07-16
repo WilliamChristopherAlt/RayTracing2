@@ -29,7 +29,7 @@ struct BoundingBox
 
     glm::vec3 size() const
     {
-        return glm::vec3(max[0] - min[0], max[0] - min[0], max[0] - min[0]);
+        return glm::vec3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
     }
 
     void growToInclude(const glm::vec3& point)
@@ -169,7 +169,7 @@ public:
 
     void split(int rootIndex, int depth, std::vector<BVHTriangle>& bvhTriangles, std::vector<RTXTriangle>& rtxTriangles)
     {
-        if (depth == MAX_DEPTH || allNodes[rootIndex].triangleCount < 1) 
+        if (depth == MAX_DEPTH || allNodes[rootIndex].triangleCount <= 1) 
             return;
 
         int splitAxis;
